@@ -1,6 +1,7 @@
 import socket
 import threading
 from json_helper import send_json, recv_json
+from history import save_history
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 5555
@@ -11,6 +12,7 @@ class RPSClient:
         self.name = None
         self.opponent = None
         self.running = True
+        self.in_match = False
 
     def connect(self):
         try:
@@ -24,30 +26,38 @@ class RPSClient:
         send_json(self.sock, data)
 
     def receive_loop(self):
-        """Luồng lắng nghe dữ liệu từ server."""
         while self.running:
             msg = recv_json(self.sock)
             if not msg:
-                print("❌ Mất kết nối tới server.")
+                print("❌ Server disconnected.")
                 self.running = False
                 break
             self.handle_message(msg)
 
     def handle_message(self, msg):
-        """Xử lý tin nhắn từ server."""
         msg_type = msg.get("type")
 
         if msg_type == "online_list":
-            print("\n🟢 Danh sách người chơi online:")
-            for p in msg["players"]:
-                print("-", p)
+            print("\n🟢 Online:", ", ".join(msg["players"]))
 
         elif msg_type == "match_start":
             self.opponent = msg["opponent"]
-            print(f"\n🎮 Trận đấu bắt đầu với {self.opponent}!")
+            self.in_match = True
+            print(f"\n🎮 Trận đấu bắt đầu với {self.opponent} (best of 3)!")
+
+        elif msg_type == "round_result":
+            print(f"Round {msg['round']}: {msg['result']}")
+
+        elif msg_type == "match_end":
+            print(f"\n🏁 Kết thúc trận: {msg['result']} ({msg['score']})")
+            save_history(self.name, self.opponent, msg["result"], msg["score"])
+            self.opponent = None
+            self.in_match = False
 
         elif msg_type == "error":
             print(f"⚠️ Lỗi: {msg['message']}")
+            self.in_match = False
+            self.opponent = None
 
         else:
             print("📩 Tin nhắn khác:", msg)
@@ -63,10 +73,10 @@ class RPSClient:
         threading.Thread(target=self.receive_loop, daemon=True).start()
 
         while self.running:
-            if not self.opponent:
+            if not self.in_match:
                 print("\n== MENU ==")
                 print("1. Xem danh sách online")
-                print("2. Chọn đối thủ để đấu")
+                print("2. Chọn đối thủ")
                 print("3. Thoát game")
                 choice = input("Chọn: ")
 
@@ -82,7 +92,11 @@ class RPSClient:
                 else:
                     print("❌ Lựa chọn không hợp lệ.")
             else:
-                print(f"⏳ Đang trong trận với {self.opponent}, chờ lượt...")
+                move = input("\nChọn (rock/paper/scissors): ").lower()
+                if move not in ["rock", "paper", "scissors"]:
+                    print("⚠️ Nhập sai, vui lòng chọn rock/paper/scissors.")
+                    continue
+                self.send({"type": "play_move", "move": move})
 
         self.sock.close()
         print("👋 Đã thoát game.")
